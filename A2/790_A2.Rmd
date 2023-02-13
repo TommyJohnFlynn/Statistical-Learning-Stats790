@@ -1,0 +1,306 @@
+---
+title: |
+  | STATS 790 - Statistical Learning 
+  | Assignment 2
+author: "Tommy Flynn"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  pdf_document:
+    includes:
+      in_header: header.tex
+    toc: true
+fontsize: 11pt
+geometry: margin = 1in
+linestretch: 1.5
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+\newpage
+## Question 1: 
+
+a) Below we compute the full rank linear regression coefficients using 4 different methods.
+
+\vspace{1cm}
+
+__(i) Naive Linear Algebra:__ Given full rank ${\bf X}_{n \times p}$ and $\vec{Y}_{n\times1}$, the naive linear algebra approach finds the coefficients $\hat{\vec{\beta}}$ by minimizing the sum of squared residuals $L = (\vec{Y} - {\bf X}\vec{\beta})'(\vec{Y} - {\bf X}\vec{\beta})$ as follows: $\frac{\partial L}{\partial \vec{\beta}} = 0 \iff -2{\bf X}'\vec{Y} + 2{\bf X'X}\vec{\beta} = 0 \iff \hat{\vec{\beta}} = {\color{red} ({\bf X'X})^{-1}{\bf X}'\vec{Y}}$.
+
+\vspace{1cm}
+
+__(ii) QR Decomposition:__ Decompose the design matrix into $\bf X = QR$ where ${\bf Q}_{n \times p}$ is orthogonal and ${\bf R}_{p \times p}$ is upper triangular. This allows us to calculate the coefficients as follows: $\hat{\vec{\beta}} = ({\bf X'X})^{-1}{\bf X}'\vec{Y} = {\bf [(QR)'(QR)]}^{-1}{\bf (QR)}'\vec{Y} = [{\bf R' Q' Q R}]^{-1}{\bf R' Q'}\vec{Y} = {\bf R}^{-1}({\bf R}')^{-1}{\bf R'Q}'\vec{Y} = {\color{red} {\bf R}^{-1}{\bf Q'}\vec{Y}}$. Note: this involves solving the upper triangular system using back subsitution. 
+
+\vspace{1cm}
+
+__(iii) SVD:__ Decompose the design matrix into $\bf X =UDV'$ where ${\bf U}_{n \times p},{\bf V}_{p \times p}$ are orthogonal and ${\bf D}_{p \times p}$ is diagonal. Then the coefficients are: $\hat{\vec{\beta}} = ({\bf X'X})^{-1}{\bf X}'\vec{Y} = [{\bf (UDV')'(UDV')}]^{-1}{\bf (UDV')}'\vec{Y} = [{\bf VDU'UDV'}]^{-1}({\bf VDU'})\vec{Y} = {\bf (V')}^{-1}{\bf D}^{-1}{\bf D}^{-1}{\bf V}^{-1}{\bf V D U'} \vec{Y} = {\color{red}{\bf V}{\bf D}^{-1}{\bf U'}\vec{Y}}$. Note: the inverse of the diagonal matrix is easily calculated using reciprocals. 
+
+\vspace{1cm}
+
+__(iv) Cholesky Decomposition:__ Decompose the design matrix and its transpose into $\bf (X'X) =LL'$ where ${\bf L}_{p \times p }$ is lower triangular. Then the coefficients are: $\hat{\vec{\beta}} = ({\bf X'X})^{-1}{\bf X}'\vec{Y} = ({\bf LL'})^{-1}{\bf X}'\vec{Y}= {\color{red}({\bf L'})^{-1} {\bf L}^{-1}{\bf X}' \vec{Y}}$. Note: this involves solving the lower and upper triangular systems using forward and back substitution.
+
+b) Below is my code to benchmark the first 3 algorithms and lm from base R. 
+```{r, eval=FALSE, fig.show='hide'}
+library(microbenchmark)
+library(ggplot2)
+library(tictoc)
+set.seed(13)
+
+# coefficients via naive linear algebra 
+naive.lm <- function(X, Y){
+  beta <- solve(t(X) %*% X) %*% t(X) %*% Y
+  return(coefficients=as.vector(beta))
+}
+
+# coefficients via QR decomposition
+qr.lm <- function(X, Y){
+  # X = QR 
+  decomp <- qr(X)  
+  
+  # solve R*beta = Q'*Y
+  beta <- solve.qr(decomp, Y)  
+  return(coefficients=as.vector(beta)) 
+}
+
+# coefficients via SVD
+svd.lm <- function(X, Y){
+  # X = UDV'
+  decomp <- svd(X)  
+  U <- decomp$u  
+  D.inv <- diag(1/decomp$d)
+  V <- decomp$v 
+    
+  beta <- V %*% D.inv %*% t(U) %*% Y
+  return(coefficients=as.vector(beta))
+}
+
+# generates (n x p) design matrix and (1 x n) response vector 
+generate.data <- function(n, p){
+  Y <- rnorm(n)
+  X <- matrix(rnorm(p*n), ncol = p)
+  list(X = X, Y = Y)
+}
+
+# set-up variables 
+sizes <- c(100, 250, 500, 1000, 2500, 5000, 10^4, 10^5/4,
+           10^5/2, 10^5, 10^6/4, 10^6/2, 10^6)
+n <- length(sizes)
+init <- rep(0, n)
+lm.times <- init
+naive.times <- init
+qr.times <- init
+svd.times <- init
+
+# main loop
+tic()
+for (i in 1:n){
+  # benchmark 
+  D <- generate.data(sizes[i], p = 10)
+  times <- microbenchmark(
+    as.vector(lm.fit(D$X, D$Y)$coefficients),
+    naive.lm(D$X, D$Y),
+    qr.lm(D$X, D$Y), 
+    svd.lm(D$X, D$Y),
+    times= 50,
+    check='equal',
+    unit='ms')
+  s <- summary(times)$mean
+  
+  # append
+  lm.times[i] <- s[1]
+  naive.times[i] <- s[2]
+  qr.times[i] <- s[3]
+  svd.times[i] <- s[4]
+}
+
+# plotting variables 
+times.df <- list(data.frame(x=sizes, y=lm.times), 
+                 data.frame(x=sizes, y=naive.times),
+                 data.frame(x=sizes, y=qr.times),
+                 data.frame(x=sizes, y=svd.times))
+c <- c('black', 'red', 'blue', 'green')
+
+plot.times <- function(data, c){
+  # set-up ggplot
+  pl <- ggplot() + 
+    geom_point(data = times.df[[1]], aes(x, y, color = 'black')) +
+    scale_x_log10() +
+    scale_y_log10() +
+    ggtitle('Lienar Regression Coefficients Benchmarking') +
+    xlab('log(n)') + 
+    ylab('log(time) in ms') +
+    scale_color_manual(name='Methods',
+                       values=c('Base R'=c[1], 
+                                'Naive Linear Algebra'=c[2], 
+                                'QR Decomposition'=c[3],
+                                'SVD'=c[4]))
+  
+  # plot lines and points
+  for (i in 1:length(data)){
+    pl <- pl +
+      geom_line(data = data[[i]], aes(x, y, color = c[i]), color=c[i]) + 
+      geom_point(data = data[[i]], aes(x, y, color = c[i]), color=c[i])
+  }
+  return(pl)
+}
+
+plot.times(times.df, c)
+
+# log-log models 
+model.lm <- lm(log(y) ~ log(x), data=times.df[[1]])
+model.naive <- lm(log(y) ~ log(x), data=times.df[[2]])
+model.qr <- lm(log(y) ~ log(x), data=times.df[[3]])
+model.svd <- lm(log(y) ~ log(x), data=times.df[[4]])
+
+model.lm
+model.naive
+model.qr
+model.svd
+toc()  # 158.244 seconds 
+```
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width = 12.5cm]{benchmark.pdf}
+\end{figure}
+
+We can see from the plot that for fixed $p$ the time increases slightly less than linearly (slope 1) for $n$ on the log-log scale. SVD consistently under-performs and base R is generally the fastest for this range; occasionally, naive linear algebra and QR decomposition will outperform it. The log-log models are as follows: 
+
+$y_{\text{base}} = -7.5241 + 0.9449x$
+
+$y_{\text{naive}} = -7.1401 + 0.9183x$
+
+$y_{\text{qr}} = -6.8913 + 0.8993x$
+
+$y_{\text{svd}} = -6.4979 +0.9336x$
+
+
+c) ESL page 93 claims that the computational complexity of various algorithms for linear regression for fixed $p$ are $\mathcal{O}(n)$. However, the models show slopes near 0.9 indicating that our simulation is performing faster than theory.
+
+
+\newpage
+## Question 2: 
+
+To implement ridge regression via data augmentation, we append the design matrix with $\sqrt{\lambda}{\bf I}_p$ and the response vector with $\vec{0}_p$ and then calculate the OLS estimate. Below is the R code to perform augmented ridge and native ridge (glmnet) on the ESL prostate data. 
+
+```{r message=FALSE}
+library(glmnet)
+library(microbenchmark)
+set.seed(13)
+
+# data augmentation  
+augment <- function(X, Y, lambda){
+  p <- ncol(X)
+  X.aug <- rbind(X, sqrt(lambda)*diag(p))
+  Y.aug <- c(Y, rep(0, p))
+  return(list(X=X.aug, Y=Y.aug))
+}
+
+# augmented fit 
+aug.fit <- function(X, Y, lambda){
+  D = augment(scale(X, center=TRUE, scale=FALSE), Y, lambda)
+  return(lm.fit(D$X, D$Y)$coefficients)
+}
+
+# load data 
+prostate <- read.delim('prostate.txt')
+X <- as.matrix(prostate[,2:9])
+Y <-  prostate$lpsa
+
+# augmented vs native fits 
+lambda1 <- 0.1
+lambda2 <- 0.1/(4*nrow(X)) # looks like they used different formula 
+aug <- aug.fit(X,Y, lambda1)
+native <- glmnet(X, Y, family='gaussian', alpha=0, lambda=lambda2)
+
+as.vector(aug)         # intercept = 0.181560845
+as.vector(native$beta) # intercept = 0.178745157 
+
+
+# test run-times on large matrix 
+generate.data <- function(n, p){
+  Y <- rnorm(n)
+  X <- matrix(rnorm(p*n), ncol = p)
+  list(X = X, Y = Y)
+}
+
+D5 <- generate.data(10^5, 10)
+m <- microbenchmark(aug.fit(D5$X,D5$Y, lambda1), 
+               glmnet(D5$X, D5$Y, family='gaussian', alpha=0, lambda=lambda2),
+               times= 100,
+               unit='ms')
+summary(m)$mean
+```
+
+We can see that the coefficients match very closely:
+$$\vec{\beta}_{\text{Aug}}' = (0.1816, 0.5643,  0.6179, -0.0212,  0.0969,  0.7532, -0.1041,  0.0481,  0.0045)$$
+$$\vec{\beta}_{\text{ridge}}' = (0.1787, 0.5640,  0.6222, -0.0212,  0.0966,  0.7613, -0.1058,  0.0495,  0.0044)$$
+However, the native approach was over twice as fast on a random $10^5 \times 10$ matrix. 
+
+
+
+
+\newpage
+## Question 3: (ELS 3.6) 
+
+We are given Gaussian prior $\vec{\beta} \sim N(\vec{0}, \tau {\bf I})$ and Gaussian sampling model $\vec{Y}\sim N({\bf X}\vec{\beta}, \sigma^2{\bf I})$. Bayes Theorem asserts that $P(\vec{\beta}|\vec{Y}) = \frac{P(\vec{Y}|\vec{\beta})P(\vec{\beta})}{P(\vec{Y})}$. Following ESL page 64, we take the negative log-posterior as follows:
+$$-\log(P(\vec{\beta}|\vec{Y})) =\frac{1}{2\sigma^2}(\vec{Y} - {\bf X} \vec{\beta})' (\vec{Y} - {\bf X} \vec{\beta}) + \frac{1}{2\tau}\vec{\beta}'\vec{\beta} + \frac{(2\pi)^{-n/2}}{\sigma} + \frac{(2\pi)^{-(p+1)/2}}{\sqrt{\tau}} - \log(P(\vec{Y}))$$ 
+If we let $\lambda = \sigma^2/\tau$ then we have: 
+$$-\log(P(\vec{\beta}|\vec{Y})) =\frac{1}{2\sigma^2} \left[(\vec{Y} - {\bf X} \vec{\beta})' (\vec{Y} - {\bf X} \vec{\beta}) + \lambda\vec{\beta}'\vec{\beta}\right] + \frac{(2\pi)^{-n/2}}{\sigma} + \frac{(2\pi)^{-(p+1)/2}}{\sqrt{\tau}} - \log(P(\vec{Y}))$$ 
+Minimizing this with respect to $\vec{\beta}$ results in: 
+$$\frac{\partial(-\log(P(\vec{\beta}|\vec{Y})))}{\partial \beta} = 0 \iff (\vec{Y} - {\bf X} \vec{\beta})' (\vec{Y} - {\bf X} \vec{\beta}) + \lambda\vec{\beta}'\vec{\beta} = 0$$
+Notice that this is exactly the condition for the ridge regression coefficients. Moreover, since we are minimizing the negative-log posterior, we get the MAP estimate or the posterior mode. In the Gaussian setting, this is also the mean. Therefore, the ridge regression estimate is equal to the posterior mean and mode. 
+
+\newpage
+## Question 4: (ELS 3.19) 
+
+Let the ridge regression estimate be given by $\hat{\vec{\beta}}^{\text{ridge}} = ({\bf X'X} +\lambda{\bf I})^{-1}{\bf X}' \vec{Y}$ and decompose the design matrix using SVD as ${\bf X}_{n \times p} = \bf UDV'$ where ${\bf U}_{n \times p},{\bf V}_{p \times p}$ are orthogonal and ${\bf D}_{p \times p}$ is diagonal. Then we have:
+
+$\hat{\vec{\beta}}^{\text{ridge}} = [{\bf (UDV')'(UDV')} + \lambda{\bf I}]^{-1}{\bf (UDV')}'\vec{Y}$
+
+$= [{\bf VDU'UDV'}+ \lambda {\bf I}]^{-1}({\bf VDU'})\vec{Y}$
+
+$= [{\bf VD}^2{\bf V}'+ \lambda {\bf I}]^{-1}({\bf VDU'})\vec{Y}$
+
+$= {\bf V(D}^2 + \lambda {\bf I})^{-1}{\bf V}'{\bf VDU'}\vec{Y}$
+
+$= {\bf V(D}^2 + \lambda {\bf I})^{-1}{\bf DU'}\vec{Y}$. 
+
+This allows us to calculate:
+
+$||\hat{\vec{\beta}}^{\text{ridge}}|| = [{\bf V(D}^2 + \lambda {\bf I})^{-1}{\bf DU'}\vec{Y}]'[{\bf V(D}^2 + \lambda {\bf I})^{-1}{\bf DU'}\vec{Y}]$
+
+$=({\bf U}'\vec{Y})' [{\bf D(D}^2 + \lambda {\bf I)}^{-2}{\bf D}]({\bf U}'\vec{Y})$
+
+Thus $||\hat{\vec{\beta}}^{\text{ridge}}|| =\sum_{i=1}^p(\vec{u_i}'\vec{Y})'\frac{d_i^2}{(d_i^2 + \lambda)^2}(\vec{u_i}'\vec{Y})$ where $\vec{u_i}$ is the ith column of $\bf U$ and $d_i$ is the ith diagonal entry of $\bf D$. Now it is clear that if $\lambda \to 0$ then $||\hat{\vec{\beta}}^{\text{ridge}}||$ increases since the middle term grows. It is also the case that $||\hat{\vec{\beta}}^{\text{lasso}}||$ increases as $\lambda \to 0$. To see this, consider the context of the size constraint $t$. We have $\lambda \to 0 \implies ||\hat{\vec{\beta}}^{\text{ridge}}||$ increases $\implies$ $t$ must increase for $\sum_{i=1}^p\beta_i^2 \leq t^2$ to hold. As ESL page 63 explains, there is a one-to-one correspondence between $\lambda$ and $t$ and it is also the case that in the space spanned by $\vec{\beta}$, the lasso constraint region $\sum_{i=1}^p|\beta_i| \leq t$ is always contained in the ridge constraint region $\sum_{i=1}^p\beta_i^2 \leq t^2$. Therefore, $\lambda \to 0 \implies t$ increases $\implies ||\hat{\vec{\beta}}^{\text{lasso}}||$ increases.
+
+\newpage
+## Question 5: (ELS 3.28) 
+
+Fix constraint $t$ and let the fitted lasso coefficient for ${X}_j$ be $\hat{\beta}_j=a$. If we augment our data with an identical copy $X_j^* = X_j$ then our model would take the following form:
+
+$y_i = \beta_0+\beta_1x_{i1} + \dots + \beta_jx_{ij} + \beta_j^*x_{ij}^* + \dots + \beta_px_{ip} + \epsilon_i, \,\,\, i=1,\dots,n$
+
+$=\beta_0+\beta_1x_{i1} + \dots + (\beta_j + \beta_j^*)x_{ij} + \dots + \beta_px_{ip} + \epsilon_i$
+
+$=\beta_0+\beta_1x_{i1} + \dots + \beta_{\text{Aug}}x_{ij} + \dots + \beta_px_{ip} + \epsilon_i, \,\,\, \beta_{\text{Aug}} = \beta_j + \beta_j^*$
+
+Thus, under constraint $t$ the lasso coefficients with respect to the augmented data are identical with the exception $\hat{\beta}_{\text{Aug}}=a \implies (\hat{\beta_j} + \hat{\beta_j}^*) = a$. Therefore, there is no significant effect of this exact collinearity since both $X_j$ parameters are thralled to the optimal value $a$ while the others remain unchanged. 
+
+\newpage
+## Question 6: (ELS 3.30) 
+
+The elastic-net optimization problem is given by:
+
+$$\underset{\vec{\beta}}{\min}||\vec{Y}-{\bf X}\vec{\beta}||^2_2 + \lambda[\alpha||\vec{\beta}||^2_2 + (1-\alpha)||\vec{\beta}||_1]$$
+Rearranging we have:
+
+$\underset{\vec{\beta}}{\min}||\vec{Y}-{\bf X}\vec{\beta}||^2_2 + ||\sqrt{\lambda\alpha}\vec{\beta}||^2_2 + \lambda(1-\alpha)||\vec{\beta}||_1$
+
+$=\underset{\vec{\beta}}{\min}\left|\left|\begin{pmatrix}\vec{Y} \\ \vec{0}_p \end{pmatrix}-\begin{pmatrix} {\bf X} \\ \sqrt{\lambda \alpha} {\bf I}_p\end{pmatrix} \vec{\beta}\right|\right|^2_2 + \lambda(1-\alpha)||\vec{\beta}||_1$
+
+Therefore, elastic-net can be considered as lasso with augmented data using the identity matrix and zero vector as well as a penalty parameter $\lambda(1-\alpha)$. 
+
